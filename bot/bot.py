@@ -8,6 +8,8 @@ from telegram import Update, InputFile
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 # import TinyTag
 
+import subprocess
+
 # Настройка логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -124,48 +126,21 @@ async def speech_to_text(audio_path: str) -> str:
         logger.error(err)
         raise Exception(f"Ошибка при распознавании речи: {err}")
 
-async def query_qwen_api(image_base64: str, question: str) -> str:
-    """Отправка запроса в QWEN-VL API"""
-    headers = {
-        "Authorization": f"Bearer {QWEN_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    
-    payload = {
-        "model": "qwen-vl-plus",
-        "input": {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"image": f"data:image/jpeg;base64,{image_base64}"},
-                        {"text": question}
-                    ]
-                }
-            ]
-        }
-    }
-    
-    response = requests.post(QWEN_API_URL, json=payload, headers=headers)
-    response.raise_for_status()
-    
-    # Парсинг ответа
-    return response.json()['output']['choices'][0]['message']['content']
-
 async def process_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка запроса (изображение + текст)"""
     try:
         image_path = context.user_data['image_path']
         text_query = context.user_data['text_query']
+
+        subprocess.run(["cp", image_path, "im.jpg"])
         
         # Загружаем изображение
-        image = Image.open(image_path)
         
         # Отправляем уведомление о начале обработки
         await update.message.reply_text("Обрабатываю ваш запрос...")
         
         # Генерируем текстовый ответ (здесь должна быть логика работы с вашей моделью)
-        text_response = generate_text_response(image, text_query)
+        text_response = generate_text_response("im.jpg", text_query)
 
         # Отправляем результаты пользователю
         await update.message.reply_text(f"Текстовый ответ:\n\n{text_response}")
@@ -188,56 +163,30 @@ async def process_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     except Exception as e:
         logger.error(f"Ошибка при обработке запроса: {e}")
-        await update.message.reply_text("Произошла ошибка при обработке вашего запроса.")
+        await update.message.reply_text(f"Произошла ошибка при обработке вашего запроса: {e}.")
 
-def generate_text_response(image: Image.Image, text_query: str) -> str:
+def generate_text_response(image_path, text_query: str) -> str:
     """
     Генерация текстового ответа на основе изображения и запроса
     """
-    response = query_qwen_api(image, text_query)
-   
-    return response
 
-def create_image_with_caption(image: Image.Image, caption: str, output_path: str):
-    """
-    Создание изображения с текстовой подписью
-    """
-    try:
-        # Создаем копию изображения
-        img_with_text = image.copy()
-        draw = ImageDraw.Draw(img_with_text)
-        
-        # Настройки шрифта
-        try:
-            font = ImageFont.truetype(FONT_PATH, 20)
-        except:
-            font = ImageFont.load_default()
-        
-        # Позиция текста (внизу изображения)
-        text_width, text_height = draw.textsize(caption, font=font)
-        margin = 10
-        x = margin
-        y = image.height - text_height - margin
-        
-        # Рисуем полупрозрачный прямоугольник для текста
-        draw.rectangle([x, y, x + text_width + 2*margin, y + text_height + 2*margin], fill=(0, 0, 0, 128))
-        
-        # Рисуем текст
-        draw.text((x + margin, y + margin), caption, font=font, fill=(255, 255, 255))
-        
-        # Сохраняем результат
-        img_with_text.save(output_path)
-        
-    except Exception as e:
-        logger.error(f"Ошибка при создании изображения с подписью: {e}")
-        # В случае ошибки просто сохраняем оригинальное изображение
-        image.save(output_path)
+    print(text_query, image_path)
+    #cmd = ['python', '../apps/plm/generate.py', '--ckpt', '/media/intern/HDD-2TB/plmodel/Perception-LM-1B', '--media_type', 'image', '--media_path', f'"{image_path}"', '--question', f'"{text_query}"']
+    cmd = ['python', '../apps/plm/generate.py', 
+           '--ckpt', '/media/intern/HDD-2TB/plmodel/Perception-LM-1B', 
+           '--media_type', 'image', 
+           '--media_path', f'{image_path}',
+           '--question', f'"{text_query}"']
+    result = subprocess.run(cmd, capture_output = True, text = True)
+    return result.stdout + result.stderr
+
+
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик ошибок"""
     logger.error(f"Ошибка при обработке обновления {update}: {context.error}")
     if update.message:
-        await update.message.reply_text("Произошла ошибка. Пожалуйста, попробуйте еще раз.")
+        await update.message.reply_text(f"Произошла ошибка. Пожалуйста, попробуйте еще раз.{update}: {context.error}")
 
 def main():
     """Запуск бота"""

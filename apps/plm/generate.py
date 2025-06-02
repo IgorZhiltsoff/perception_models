@@ -6,6 +6,8 @@ import time
 from dataclasses import dataclass, field
 from typing import List, Optional
 
+import textwrap
+
 logging.basicConfig(level=logging.INFO)
 
 import torch
@@ -523,8 +525,75 @@ def load_consolidated_model_and_tokenizer(ckpt):
 
     return model, tokenizer, config
 
+def generate(
+    ckpt,
+    media_path="",
+    question="Describe the image in details.",
+    media_type="image",
+    number_of_frames=4,
+    number_of_tiles=1,
+    temperature=0.0,
+    top_p=None,
+    top_k=None,
+):
+    model, tokenizer, config = load_consolidated_model_and_tokenizer(ckpt) 
+    prompts = []
+    if media_type == "image":
+        transform = get_image_transform(
+            vision_input_type=(
+                "vanilla" if number_of_tiles == 1 else config.data.vision_input_type
+            ),
+            image_res=model.vision_model.image_size,
+            max_num_tiles=number_of_tiles,
+        )
+        image = Image.open(media_path).convert("RGB")
+        image, _ = transform(image)
+        prompts.append((question, image))
+    elif media_type == "video":
+        transform = get_video_transform(
+            image_res=model.vision_model.image_size,
+        )
+        video_info = (media_path, number_of_frames, None, None, None)
+        frames, _ = transform(video_info)
+        prompts.append((question, frames))
+    else:
+        raise NotImplementedError(
+            f"The provided generate function only supports image and video."
+        )
+    # Create generator
+    gen_cfg = dataclass_from_dict(
+        PackedCausalTransformerGeneratorArgs,
+        {"temperature": temperature, "top_p": top_p, "top_k": top_k},
+        strict=False,
+    )
+    generator = PackedCausalTransformerGenerator(gen_cfg, model, tokenizer)
+    # Run generation
+    start_time = time.time()
+    generation, loglikelihood, greedy = generator.generate(prompts)
+    end_time = time.time()
+    for i, gen in enumerate(generation):
+        # Calculate tokens per second
+        total_tokens = sum(
+            len(tokenizer.encode(gen, False, False)) for gen in generation
+        )
+        tokens_per_second = total_tokens / (end_time - start_time)
+        print("=================================================")
+        print(textwrap.fill(gen, width=75))
+        print(f"Tokens per second: {tokens_per_second:.2f}")
+        print("=================================================")
+
 
 def main(args):
+    generate(
+        ckpt=args.ckpt,
+        media_path=args.media_path,
+        question=args.question,
+        media_type=args.media_type,
+        number_of_tiles=1
+        
+    )
+
+def main1(args):
     # Load model and tokenizer
     model, tokenizer, config = load_consolidated_model_and_tokenizer(args.ckpt)
     media_type = args.media_type
@@ -560,6 +629,11 @@ def main(args):
     generator = PackedCausalTransformerGenerator(gen_cfg, model, tokenizer)
 
     # Run generation
+    print("HELLO!!!!!!!!!!!!!")
+    print("HELLO!!!!!!!!!!!!!")
+    print("HELLO!!!!!!!!!!!!!")
+    torch.cuda.empty_cache()
+    time.sleep(5)
     start_time = time.time()
     generation, loglikelihood, greedy = generator.generate(prompts)
     end_time = time.time()
